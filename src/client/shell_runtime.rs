@@ -4,10 +4,12 @@ pub(super) fn dispatch_client_shell_actions(
     actions: Vec<shell::ClientShellAction>,
     endpoint_commands: &mut endpoint_commands::EndpointCommands,
     endpoints: &mut endpoint::EndpointRegistry,
+    mut shell: Option<&mut shell::ClientShellState>,
     detached_process_children: &mut Vec<std::process::Child>,
     event_tx: &tokio::sync::mpsc::Sender<ClientLoopEvent>,
-) -> Result<Vec<crossterm::event::MouseEvent>, ClientError> {
+) -> Result<(Vec<crossterm::event::MouseEvent>, bool), ClientError> {
     let mut replay_mouse = Vec::new();
+    let mut repaint = false;
     for action in actions {
         match action {
             shell::ClientShellAction::Endpoint {
@@ -15,15 +17,12 @@ pub(super) fn dispatch_client_shell_actions(
                 boot_id,
                 request,
             } => {
-                if endpoints.active_id() == &endpoint_id && endpoints.active_surface_available() {
-                    if let Some(connection) = endpoints.connection(&endpoint_id) {
-                        endpoint_commands.enqueue(
-                            endpoint_id,
-                            connection.generation,
-                            boot_id,
-                            request,
-                        );
-                    }
+                if let Some(connection) = endpoints.connection(&endpoint_id).filter(|_| {
+                    endpoints.active_id() == &endpoint_id && endpoints.active_surface_available()
+                }) {
+                    endpoint_commands.enqueue(endpoint_id, connection.generation, boot_id, request);
+                } else if let Some(shell) = shell.as_deref_mut() {
+                    repaint |= shell.cancel_endpoint_request(&request.id);
                 }
             }
             shell::ClientShellAction::ClipboardWrite(bytes) => {
@@ -67,11 +66,14 @@ pub(super) fn dispatch_client_shell_actions(
     // must reject it; completion below resumes the committed owner's lane.
     if endpoints.active_surface_available() {
         let active_endpoint = endpoints.active_id().clone();
-        endpoint_commands
-            .send_next(&active_endpoint, endpoints)
-            .map_err(ClientError::ConnectionLost)?;
+        let cancelled = endpoint_commands.send_next(&active_endpoint, endpoints);
+        if let Some(shell) = shell {
+            for request_id in cancelled {
+                repaint |= shell.cancel_endpoint_request(&request_id);
+            }
+        }
     }
-    Ok(replay_mouse)
+    Ok((replay_mouse, repaint))
 }
 
 pub(super) fn client_shell_resize_message(
@@ -164,7 +166,7 @@ fn install_pending_activation(
         .unwrap_or_default();
     if let Some(shell) = state.shell.as_mut() {
         for request_id in retired {
-            shell.discard_endpoint_result(&request_id);
+            shell.cancel_endpoint_request(&request_id);
         }
     }
     *next_surface_serial = next_surface_serial.saturating_add(1);
@@ -209,13 +211,19 @@ pub(super) fn begin_endpoint_activation(
     if already_active {
         if let (Some(shell), Some(target)) = (state.shell.as_mut(), target) {
             let actions = shell.focus_endpoint_target(target);
-            dispatch_client_shell_actions(
+            let (_, repaint) = dispatch_client_shell_actions(
                 actions,
                 endpoint_commands,
                 endpoints,
+                Some(shell),
                 &mut state.detached_process_children,
                 event_tx,
             )?;
+            if repaint {
+                if let Some(frame) = shell.compose(state.reported_size.0, state.reported_size.1) {
+                    state.present_frame(frame);
+                }
+            }
         }
         return Ok(());
     }
@@ -365,6 +373,15 @@ pub(super) fn complete_endpoint_activation(
         | endpoint::ActivationCompletion::AwaitingPresentationEffects => unreachable!(),
     };
     state.unfreeze_presentation();
+    if successor.is_none() {
+        let active_endpoint = endpoints.active_id().clone();
+        let cancelled = endpoint_commands.send_next(&active_endpoint, endpoints);
+        if let Some(shell) = state.shell.as_mut() {
+            for request_id in cancelled {
+                shell.cancel_endpoint_request(&request_id);
+            }
+        }
+    }
     let (cleanup, frame) = {
         let shell = state.shell.as_mut().expect("checked client shell");
         (
@@ -383,10 +400,6 @@ pub(super) fn complete_endpoint_activation(
             force: true,
         }));
     }
-    let active_endpoint = endpoints.active_id().clone();
-    endpoint_commands
-        .send_next(&active_endpoint, endpoints)
-        .map_err(ClientError::ConnectionLost)?;
     Ok(None)
 }
 
@@ -462,7 +475,7 @@ pub(super) fn handle_endpoint_disconnect(
     let cancelled = endpoint_commands.disconnect(endpoint_id);
     let unavailable = state.shell.as_mut().and_then(|shell| {
         for request_id in cancelled {
-            shell.discard_endpoint_result(&request_id);
+            shell.cancel_endpoint_request(&request_id);
         }
         shell.mark_endpoint_disconnected(endpoint_id);
         endpoint_was_active.then(|| format!("{} {notice}", shell.endpoint_label(endpoint_id)))
@@ -520,7 +533,7 @@ pub(super) fn handle_endpoint_attention(
     let cancelled = endpoint_commands.disconnect(endpoint_id);
     let unavailable = state.shell.as_mut().and_then(|shell| {
         for request_id in cancelled {
-            shell.discard_endpoint_result(&request_id);
+            shell.cancel_endpoint_request(&request_id);
         }
         shell.set_endpoint_status(endpoint_id, endpoint::ClientEndpointStatus::Attention);
         endpoint_was_active.then(|| format!("{}: {message}", shell.endpoint_label(endpoint_id)))
@@ -644,13 +657,22 @@ pub(super) fn finish_client_shell_input(
         query_host_terminal_theme();
     }
     sync_client_shell_keyboard_report_all(state)?;
-    let replay = dispatch_client_shell_actions(
+    let (replay, dispatch_repaint) = dispatch_client_shell_actions(
         outcome.actions,
         endpoint_commands,
         endpoints,
+        state.shell.as_mut(),
         &mut state.detached_process_children,
         event_tx,
     )?;
+    let frame = if dispatch_repaint {
+        state
+            .shell
+            .as_mut()
+            .and_then(|shell| shell.compose(state.reported_size.0, state.reported_size.1))
+    } else {
+        frame
+    };
     debug_assert!(
         replay.is_empty(),
         "mouse replay only follows endpoint results"

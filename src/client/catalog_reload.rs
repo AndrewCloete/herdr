@@ -50,7 +50,7 @@ pub(super) fn apply_profiles(
         state.retire_endpoint_graphics(&endpoint_id);
         if let Some(shell) = state.shell.as_mut() {
             for request_id in cancelled {
-                shell.discard_endpoint_result(&request_id);
+                shell.cancel_endpoint_request(&request_id);
             }
             shell.retire_endpoint(&endpoint_id);
         }

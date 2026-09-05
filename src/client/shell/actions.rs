@@ -507,8 +507,25 @@ impl ClientShellState {
         outcome.actions
     }
 
-    pub(crate) fn discard_endpoint_result(&mut self, request_id: &str) {
-        self.pending_requests.remove(request_id);
+    pub(crate) fn cancel_endpoint_request(&mut self, request_id: &str) -> bool {
+        let Some(pending) = self.pending_requests.get(request_id) else {
+            return false;
+        };
+        let boot_id = pending.boot_id.clone();
+        let (repaint, actions) = self.handle_endpoint_result(
+            &boot_id,
+            request_id,
+            Err(ClientShellEndpointError {
+                code: Some("endpoint_cancelled".into()),
+                message: "This server action was interrupted. Check its state before retrying."
+                    .into(),
+            }),
+        );
+        debug_assert!(
+            actions.is_empty(),
+            "cancellation must not start another action"
+        );
+        repaint
     }
 
     pub(crate) fn handle_endpoint_result(
@@ -548,6 +565,12 @@ impl ClientShellState {
                         pending.method_name.clone(),
                         "Server timed out",
                         format!("This server did not respond to {}.", pending.method_name),
+                    ),
+                    "endpoint_cancelled" => (
+                        ClientEndpointNoticeKind::Unavailable,
+                        "cancelled".to_owned(),
+                        "Action interrupted",
+                        error.message.clone(),
                     ),
                     "server_unavailable" => (
                         ClientEndpointNoticeKind::Unavailable,
@@ -655,6 +678,9 @@ impl ClientShellState {
                         self.endpoint_error =
                             Some("endpoint returned an unexpected selection result".to_owned());
                         (true, fallback())
+                    }
+                    Err(error) if error.code.as_deref() == Some("endpoint_cancelled") => {
+                        (true, Vec::new())
                     }
                     Err(_) => (true, fallback()),
                 };
@@ -767,7 +793,7 @@ impl ClientShellState {
                     Err(error)
                         if matches!(
                             error.code.as_deref(),
-                            Some("stale_content" | "stale_target")
+                            Some("stale_content" | "stale_target" | "endpoint_cancelled")
                         ) =>
                     {
                         self.url_click_consumes_until_up = completed_before_release;

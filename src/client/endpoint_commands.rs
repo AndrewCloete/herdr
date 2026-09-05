@@ -91,35 +91,44 @@ impl EndpointCommands {
         &mut self,
         endpoint_id: &ClientEndpointId,
         endpoints: &mut EndpointRegistry,
-    ) -> io::Result<()> {
+    ) -> Vec<String> {
         let lane = self.lanes.entry(endpoint_id.clone()).or_default();
+        let mut cancelled = Vec::new();
         if lane.in_flight.is_some() {
-            return Ok(());
+            return cancelled;
         }
-        let Some(queued) = lane.queued.pop_front() else {
-            return Ok(());
-        };
-        if !endpoints.accepts(endpoint_id, queued.generation) {
-            return Ok(());
+        while let Some(queued) = lane.queued.pop_front() {
+            let request_id = queued.request.id.clone();
+            if !endpoints.accepts(endpoint_id, queued.generation) {
+                cancelled.push(request_id);
+                continue;
+            }
+            let request = match serde_json::to_string(&queued.request) {
+                Ok(request) => request,
+                Err(error) => {
+                    tracing::warn!(%error, %request_id, "could not encode endpoint request");
+                    cancelled.push(request_id);
+                    continue;
+                }
+            };
+            let message = ClientMessage::ClientShellEndpointRequest {
+                boot_id: queued.boot_id.clone(),
+                request,
+            };
+            if endpoints.send_to(endpoint_id, &message) != EndpointSendOutcome::Sent {
+                cancelled.push(request_id);
+                continue;
+            }
+            lane.in_flight = Some(InFlightCommand {
+                generation: queued.generation,
+                boot_id: queued.boot_id,
+                request_id,
+                response: Vec::new(),
+                sent_at: Instant::now(),
+            });
+            break;
         }
-        let request_id = queued.request.id.clone();
-        let request = serde_json::to_string(&queued.request)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let message = ClientMessage::ClientShellEndpointRequest {
-            boot_id: queued.boot_id.clone(),
-            request,
-        };
-        if endpoints.send_to(endpoint_id, &message) != EndpointSendOutcome::Sent {
-            return Ok(());
-        }
-        lane.in_flight = Some(InFlightCommand {
-            generation: queued.generation,
-            boot_id: queued.boot_id,
-            request_id,
-            response: Vec::new(),
-            sent_at: Instant::now(),
-        });
-        Ok(())
+        cancelled
     }
 
     pub(super) fn accepts_response(

@@ -1663,8 +1663,10 @@ async fn run_client_loop(
                                         completed.result,
                                     )
                                 } else {
-                                    shell.discard_endpoint_result(&completed.request_id);
-                                    (false, Vec::new())
+                                    (
+                                        shell.cancel_endpoint_request(&completed.request_id),
+                                        Vec::new(),
+                                    )
                                 }
                             },
                         );
@@ -1675,13 +1677,15 @@ async fn run_client_loop(
                             &mut state,
                             &mut prefix_input_source,
                         );
-                        let replay_mouse = dispatch_client_shell_actions(
+                        let (replay_mouse, dispatch_repaint) = dispatch_client_shell_actions(
                             actions,
                             &mut endpoint_commands,
                             &mut write_stream,
+                            state.shell.as_mut(),
                             &mut state.detached_process_children,
                             &event_tx,
                         )?;
+                        let repaint = repaint || dispatch_repaint;
                         if replay_mouse.is_empty() {
                             if repaint {
                                 if let Some(frame) = state.shell.as_mut().and_then(|shell| {

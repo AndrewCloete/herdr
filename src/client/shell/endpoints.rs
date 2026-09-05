@@ -122,7 +122,10 @@ impl ClientShellState {
     pub(crate) fn mark_endpoint_disconnected(&mut self, endpoint_id: &ClientEndpointId) {
         self.set_endpoint_status(endpoint_id, ClientEndpointStatus::Reconnecting);
         if endpoint_id == &self.active_endpoint_id {
-            self.pending_requests.clear();
+            let pending = self.pending_requests.keys().cloned().collect::<Vec<_>>();
+            for request_id in pending {
+                self.cancel_endpoint_request(&request_id);
+            }
             self.pending_integration_installs = 0;
             self.pane_scroll_in_flight.clear();
             self.pane_scroll_queued.clear();
