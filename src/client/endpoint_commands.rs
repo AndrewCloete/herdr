@@ -111,6 +111,12 @@ impl EndpointCommands {
                     continue;
                 }
             };
+            // The server disconnects clients that send commands above this wire limit.
+            if request.len() > crate::server::client_commands::MAX_ENDPOINT_COMMAND_BYTES {
+                tracing::warn!(%request_id, "endpoint request exceeds the server size limit");
+                cancelled.push(request_id);
+                continue;
+            }
             let message = ClientMessage::ClientShellEndpointRequest {
                 boot_id: queued.boot_id.clone(),
                 request,

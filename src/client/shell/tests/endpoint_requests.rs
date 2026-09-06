@@ -149,40 +149,56 @@ fn dispatcher_cancels_worktree_requests_on_frozen_surface_or_failed_send() {
 }
 
 #[test]
-fn stale_queued_request_is_cancelled_without_blocking_the_current_generation() {
+fn unusable_queued_request_is_cancelled_without_blocking_the_next_request() {
     use crate::client::endpoint::{EndpointNegotiation, EndpointRegistry};
     use crate::client::endpoint_commands::EndpointCommands;
 
-    let (mut state, actions) = pending_popup();
-    let stale_id = request_id(&actions).to_owned();
-    let current = state.focus_endpoint_target(ClientEndpointFocusTarget::Workspace("ws_1".into()));
-    let current_id = request_id(&current).to_owned();
-    let mut commands = EndpointCommands::default();
-    for (generation, actions) in [(1, actions), (2, current)] {
-        for action in actions {
-            let ClientShellAction::Endpoint {
-                endpoint_id,
-                boot_id,
-                request,
-            } = action
-            else {
+    for oversized in [false, true] {
+        let (mut state, mut actions) = pending_popup();
+        if oversized {
+            let ClientShellAction::Endpoint { request, .. } = &mut actions[0] else {
                 panic!("expected endpoint request");
             };
-            commands.enqueue(endpoint_id, generation, boot_id, request);
+            request.method = crate::api::schema::Method::PaneSelectionReadChecked(
+                crate::api::schema::PaneSelectionReadCheckedParams {
+                    pane_id: "pane_1".into(),
+                    anchor: crate::api::schema::PaneTextPoint { row: 0, col: 0 },
+                    cursor: crate::api::schema::PaneTextPoint { row: 511, col: 511 },
+                    expected_cells: vec!["x".into(); 512 * 512],
+                },
+            );
         }
+        let stale_id = request_id(&actions).to_owned();
+        let current =
+            state.focus_endpoint_target(ClientEndpointFocusTarget::Workspace("ws_1".into()));
+        let current_id = request_id(&current).to_owned();
+        let mut commands = EndpointCommands::default();
+        for (generation, actions) in [(if oversized { 2 } else { 1 }, actions), (2, current)] {
+            for action in actions {
+                let ClientShellAction::Endpoint {
+                    endpoint_id,
+                    boot_id,
+                    request,
+                } = action
+                else {
+                    panic!("expected endpoint request");
+                };
+                commands.enqueue(endpoint_id, generation, boot_id, request);
+            }
+        }
+        let mut endpoints = EndpointRegistry::new(
+            TestTransport { fail: false },
+            2,
+            EndpointNegotiation::default(),
+        );
+        let cancelled = commands.send_next(&ClientEndpointId::Local, &mut endpoints);
+        assert_eq!(cancelled, vec![stale_id.clone()]);
+        state.cancel_endpoint_request(&stale_id);
+        assert!(!state.popup_pending);
+        assert!(!commands.accepts_response(&ClientEndpointId::Local, 1, "boot-1", &stale_id));
+        assert!(commands.accepts_response(&ClientEndpointId::Local, 2, "boot-1", &current_id));
+        assert!(state.pending_requests.contains_key(&current_id));
     }
-    let mut endpoints = EndpointRegistry::new(
-        TestTransport { fail: false },
-        2,
-        EndpointNegotiation::default(),
-    );
-    let cancelled = commands.send_next(&ClientEndpointId::Local, &mut endpoints);
-    assert_eq!(cancelled, vec![stale_id.clone()]);
-    state.cancel_endpoint_request(&stale_id);
-    assert!(!state.popup_pending);
-    assert!(!commands.accepts_response(&ClientEndpointId::Local, 1, "boot-1", &stale_id));
-    assert!(commands.accepts_response(&ClientEndpointId::Local, 2, "boot-1", &current_id));
-    assert!(state.pending_requests.contains_key(&current_id));
 }
 
 #[test]
