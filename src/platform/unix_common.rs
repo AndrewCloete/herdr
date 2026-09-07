@@ -27,30 +27,48 @@ pub(crate) fn wait_client_stream_readable(stream: &crate::ipc::LocalStream) -> s
     Ok(())
 }
 
-pub(crate) fn wait_remote_bridge_readable(stream: &crate::ipc::LocalStream) -> std::io::Result<()> {
-    use std::os::fd::{AsFd as _, AsRawFd as _};
-    let crate::ipc::LocalStream::UdSocket(stream) = stream;
-    let mut descriptor = libc::pollfd {
-        fd: stream.as_fd().as_raw_fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    loop {
-        // Cancellation shuts down this socket's read half, waking the indefinite wait.
-        // SAFETY: descriptor points to one valid pollfd whose socket remains borrowed here.
-        if unsafe { libc::poll(&mut descriptor, 1, -1) } >= 0 {
-            return Ok(());
-        }
-        let error = std::io::Error::last_os_error();
-        if error.kind() != std::io::ErrorKind::Interrupted {
-            return Err(error);
-        }
-    }
+pub(crate) struct RemoteBridgeWake {
+    reader: std::os::unix::net::UnixStream,
+    writer: std::os::unix::net::UnixStream,
 }
 
-pub(crate) fn cancel_remote_bridge_read(stream: &crate::ipc::LocalStream) -> std::io::Result<()> {
-    let crate::ipc::LocalStream::UdSocket(stream) = stream;
-    stream.inner().shutdown(std::net::Shutdown::Read)
+impl RemoteBridgeWake {
+    pub(crate) fn new() -> std::io::Result<Self> {
+        let (reader, writer) = std::os::unix::net::UnixStream::pair()?;
+        Ok(Self { reader, writer })
+    }
+
+    pub(crate) fn cancel(&self) -> std::io::Result<()> {
+        // EOF stays readable, including when cancellation precedes the wait.
+        self.writer.shutdown(std::net::Shutdown::Write)
+    }
+
+    pub(crate) fn wait(&self, stream: &crate::ipc::LocalStream) -> std::io::Result<()> {
+        use std::os::fd::{AsFd as _, AsRawFd as _};
+        let crate::ipc::LocalStream::UdSocket(stream) = stream;
+        let mut descriptors = [
+            libc::pollfd {
+                fd: stream.as_fd().as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: self.reader.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        loop {
+            // SAFETY: both descriptors remain borrowed and the array has two entries.
+            if unsafe { libc::poll(descriptors.as_mut_ptr(), 2, -1) } >= 0 {
+                return Ok(());
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
 }
 
 pub(super) fn read_terminal_grid_size() -> std::io::Result<(u16, u16)> {

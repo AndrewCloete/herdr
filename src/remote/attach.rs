@@ -1943,20 +1943,20 @@ fn write_managed_ssh_config() -> io::Result<ManagedSshConfig> {
 
 struct BridgeUploadStop {
     stopped: AtomicBool,
-    stream: crate::ipc::LocalStream,
+    wake: crate::platform::RemoteBridgeWake,
 }
 
 impl BridgeUploadStop {
-    fn new(stream: &crate::ipc::LocalStream) -> io::Result<Self> {
+    fn new() -> io::Result<Self> {
         Ok(Self {
             stopped: AtomicBool::new(false),
-            stream: stream.try_clone()?,
+            wake: crate::platform::RemoteBridgeWake::new()?,
         })
     }
 
     fn cancel(&self) {
         if !self.stopped.swap(true, Ordering::AcqRel) {
-            if let Err(error) = crate::platform::cancel_remote_bridge_read(&self.stream) {
+            if let Err(error) = self.wake.cancel() {
                 tracing::debug!(%error, "remote bridge read cancellation failed");
             }
         }
@@ -1965,6 +1965,12 @@ impl BridgeUploadStop {
     fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::Acquire)
     }
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn bridge_upload_cancellation_for_test() -> impl Fn() {
+    let stop = BridgeUploadStop::new().unwrap();
+    move || stop.cancel()
 }
 
 fn bridge_connection(
@@ -1976,7 +1982,7 @@ fn bridge_connection(
     noninteractive: bool,
     bridge_stop: &Arc<AtomicBool>,
 ) -> io::Result<()> {
-    let upload_stop = Arc::new(BridgeUploadStop::new(&stream)?);
+    let upload_stop = Arc::new(BridgeUploadStop::new()?);
     let mut command = Command::new("ssh");
     apply_managed_ssh_options(&mut command, ssh_options);
     if noninteractive {
@@ -2191,7 +2197,7 @@ fn copy_local_stream_to_writer<W: io::Write>(
                 total += read as u64;
             }
             crate::ipc::LocalStreamReadCount::Pending => {
-                crate::platform::wait_remote_bridge_readable(&stream)?;
+                connection_stop.wake.wait(&stream)?;
             }
             crate::ipc::LocalStreamReadCount::Closed => {
                 client_closed.store(true, Ordering::Release);
@@ -2306,7 +2312,7 @@ mod tests {
         let (mut client, stream) = upload_test_streams("idle");
         let attempts = Arc::new(AtomicUsize::new(0));
         let worker_attempts = Arc::clone(&attempts);
-        let stop = Arc::new(BridgeUploadStop::new(&stream).unwrap());
+        let stop = Arc::new(BridgeUploadStop::new().unwrap());
         let worker_stop = Arc::clone(&stop);
         let (done_tx, done_rx) = mpsc::channel();
         let worker = thread::spawn(move || {
@@ -2362,7 +2368,7 @@ mod tests {
 
         let (mut client, stream) = upload_test_streams("cancel-before-wait");
         let mut download = stream.try_clone().unwrap();
-        let stop = BridgeUploadStop::new(&stream).unwrap();
+        let stop = BridgeUploadStop::new().unwrap();
         stop.cancel();
         stop.cancel();
         let closed = AtomicBool::new(false);
@@ -2384,12 +2390,30 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn bridge_upload_cancel_between_stop_check_and_wait_is_retained() {
+        let (_client, stream) = upload_test_streams("cancel-before-poll");
+        let stop = BridgeUploadStop::new().unwrap();
+        assert!(!stop.is_stopped());
+        stop.cancel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            done_tx.send(stop.wake.wait(&stream)).unwrap();
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn bridge_upload_drains_input_before_peer_eof() {
         let (mut client, stream) = upload_test_streams("drain");
         let payload = vec![b'x'; 1024 * 1024];
         let expected = payload.clone();
         let worker = thread::spawn(move || {
-            let stop = BridgeUploadStop::new(&stream).unwrap();
+            let stop = BridgeUploadStop::new().unwrap();
             let mut output = Vec::new();
             let closed = AtomicBool::new(false);
             let count = copy_local_stream_to_writer(
