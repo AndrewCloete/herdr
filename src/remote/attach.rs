@@ -610,6 +610,8 @@ impl RemoteSsh {
     fn framed_user_shell_output(&self, remote_command: &str) -> io::Result<Output> {
         let mut command = self.command();
         command
+            // Windows OpenSSH can still read the console with stdin redirected to NUL.
+            .arg("-n")
             .arg(remote_command)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
