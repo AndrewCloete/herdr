@@ -405,8 +405,10 @@ fn windows_powershell_streaming_application_command(path: &str, args: &[&str]) -
         .map(|arg| crate::platform::quote_windows_command_line_arg(arg))
         .collect::<Vec<_>>()
         .join(" ");
+    // Start-Process -Wait waits for descendants, including a cold-started server.
+    // Retain the handle so Windows PowerShell 5.1 keeps the application's exit code.
     windows_powershell_script_command(&format!(
-        "$process = Start-Process -FilePath {} -ArgumentList {} -NoNewWindow -Wait -PassThru -ErrorAction Stop; exit $process.ExitCode",
+        "$process = Start-Process -FilePath {} -ArgumentList {} -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
         crate::platform::quote_powershell_arg(path),
         crate::platform::quote_powershell_arg(&command_line),
     ))
@@ -3782,12 +3784,12 @@ mod tests {
             (
                 "direct bridge",
                 executable.bridge_command("agents", false),
-                "$process = Start-Process -FilePath herdr.exe -ArgumentList '--session agents remote-client-bridge' -NoNewWindow -Wait -PassThru -ErrorAction Stop; exit $process.ExitCode",
+                "$process = Start-Process -FilePath herdr.exe -ArgumentList '--session agents remote-client-bridge' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
             ),
             (
                 "saved bridge with closed stdin",
                 executable.saved_bridge_command("agents", false),
-                "$process = Start-Process -FilePath herdr.exe -ArgumentList '--session agents remote-client-bridge' -NoNewWindow -Wait -PassThru -ErrorAction Stop; exit $process.ExitCode",
+                "$process = Start-Process -FilePath herdr.exe -ArgumentList '--session agents remote-client-bridge' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
             ),
         ];
 
@@ -3801,6 +3803,65 @@ mod tests {
                 .unwrap_or_else(|| panic!("{label} lacks shared output marker: {script}"));
             assert_eq!(script, expected, "{label}");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_bridge_returns_application_exit_while_descendant_is_running() {
+        let pid_file = std::env::temp_dir().join(format!(
+            "herdr bridge descendant {}.pid",
+            std::process::id()
+        ));
+        let script = format!(
+            "$child = Start-Process powershell.exe -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30' -NoNewWindow -PassThru; Set-Content -LiteralPath {} -Value $child.Id; exit 23",
+            crate::platform::quote_powershell_arg(&pid_file.to_string_lossy())
+        );
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            script
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        let command = windows_powershell_streaming_application_command(
+            "powershell.exe",
+            &["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded],
+        );
+        let mut launcher = Command::new("powershell.exe");
+        launcher
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+            .arg(command.split_whitespace().last().unwrap())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        crate::platform::configure_background_command(&mut launcher);
+        let mut launcher = launcher.spawn().expect("launch Windows bridge command");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            let status = launcher.try_wait().expect("poll bridge launcher");
+            if status.is_some() || Instant::now() >= deadline {
+                break status;
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        // End only the test descendant, including when the old tree-wide wait hangs.
+        let descendant = fs::read_to_string(&pid_file).expect("descendant PID");
+        let descendant = descendant.trim().parse::<u32>().expect("numeric PID");
+        let mut cleanup = Command::new("powershell.exe");
+        cleanup
+            .args(["-NoProfile", "-NonInteractive", "-Command"])
+            .arg(format!("Stop-Process -Id {descendant} -ErrorAction Stop"));
+        crate::platform::configure_background_command(&mut cleanup);
+        let descendant_was_running = cleanup.status().expect("stop test descendant").success();
+        if status.is_none() {
+            let _ = launcher.kill();
+        }
+        let _ = launcher.wait();
+        let _ = fs::remove_file(pid_file);
+        assert!(
+            descendant_was_running,
+            "descendant must outlive the application"
+        );
+        assert_eq!(status.and_then(|status| status.code()), Some(23));
     }
 
     #[test]
