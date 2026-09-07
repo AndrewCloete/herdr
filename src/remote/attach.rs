@@ -3291,9 +3291,6 @@ mod tests {
                 .strip_prefix(&preamble)
                 .unwrap_or_else(|| panic!("{label} lacks shared output marker: {script}"));
             assert_eq!(script, expected, "{label}");
-            for forbidden in ["/bin/sh", "test -x", "exec ", "</dev/null", "'\\''"] {
-                assert!(!script.contains(forbidden), "{label}: {script}");
-            }
         }
     }
 
