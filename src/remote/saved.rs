@@ -22,7 +22,7 @@ pub(crate) fn connect_saved_ssh(
     crate::session::validate_name(session)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let ssh = RemoteSsh::new_noninteractive(target.to_owned());
-    let remote_herdr = find_installed_remote_herdr(&ssh)?;
+    let remote_herdr = find_installed_remote_herdr(&ssh, windows_desktop)?;
     let path = saved_bridge_path(profile_id);
     let bridge = SshStdioBridge::start(
         target.to_owned(),

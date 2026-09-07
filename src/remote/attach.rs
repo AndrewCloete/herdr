@@ -1170,12 +1170,15 @@ pub(super) fn prepare_remote_herdr(
     })
 }
 
-pub(super) fn find_installed_remote_herdr(ssh: &RemoteSsh) -> io::Result<RemoteHerdr> {
+pub(super) fn find_installed_remote_herdr(
+    ssh: &RemoteSsh,
+    require_desktop: bool,
+) -> io::Result<RemoteHerdr> {
     let platform = detect_remote_platform(ssh)?;
     let remote_herdr = RemoteHerdr::for_platform(platform);
     let candidates = remote_binary_candidates(ssh, &remote_herdr)?;
     for candidate in candidates {
-        if remote_binary_supports_endpoint_requirement(ssh, &candidate, true, false)? {
+        if remote_binary_supports_endpoint_requirement(ssh, &candidate, true, require_desktop)? {
             return Ok(candidate);
         }
     }
