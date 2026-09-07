@@ -1968,9 +1968,34 @@ impl BridgeUploadStop {
 }
 
 #[cfg(all(test, unix))]
-pub(crate) fn bridge_upload_cancellation_for_test() -> impl Fn() {
-    let stop = BridgeUploadStop::new().unwrap();
-    move || stop.cancel()
+pub(crate) fn bridge_upload_cancellation_for_test(
+    stream: crate::ipc::LocalStream,
+    mut writer: impl io::Write + Send + 'static,
+) -> impl FnOnce() {
+    stream.set_nonblocking(true).unwrap();
+    let stop = Arc::new(BridgeUploadStop::new().unwrap());
+    let worker_stop = Arc::clone(&stop);
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let worker = thread::spawn(move || {
+        let closed = AtomicBool::new(false);
+        let result = copy_local_stream_to_writer(
+            stream,
+            &mut writer,
+            &worker_stop,
+            &AtomicBool::new(false),
+            &closed,
+        );
+        done_tx
+            .send((result, closed.load(Ordering::Acquire)))
+            .unwrap();
+    });
+    move || {
+        stop.cancel();
+        let (result, closed) = done_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        worker.join().unwrap();
+        result.unwrap();
+        assert!(!closed, "upload cancellation must not report peer EOF");
+    }
 }
 
 fn bridge_connection(

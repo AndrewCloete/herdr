@@ -171,7 +171,31 @@ mod tests {
         let mut reader_stream = client.try_clone().unwrap();
         let mut writer = endpoint::NativeEndpointTransport::with_lifetime(client, ()).unwrap();
         let stopped = writer.stop_handle();
-        let cancel = crate::remote::bridge_upload_cancellation_for_test();
+        struct ForwardedInput(std::sync::mpsc::Sender<Vec<u8>>);
+        impl io::Write for ForwardedInput {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.send(bytes.to_vec()).unwrap();
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let (forwarded_tx, forwarded_rx) = std::sync::mpsc::channel();
+        let cancel = crate::remote::bridge_upload_cancellation_for_test(
+            bridge.try_clone().unwrap(),
+            ForwardedInput(forwarded_tx),
+        );
+        let message = ClientMessage::ClientShellFocus { focused: false };
+        let mut expected = Vec::new();
+        protocol::write_message(&mut expected, &message).unwrap();
+        writer.send(&message).unwrap();
+        let mut forwarded = Vec::new();
+        while forwarded.len() < expected.len() {
+            forwarded.extend(forwarded_rx.recv_timeout(Duration::from_secs(3)).unwrap());
+        }
+        assert_eq!(forwarded, expected);
         cancel();
 
         // A client write after upload cancellation must not stop the download reader.
