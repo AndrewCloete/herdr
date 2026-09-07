@@ -3809,8 +3809,12 @@ mod tests {
     #[test]
     fn windows_bridge_returns_application_exit_while_descendant_is_running() {
         let pid_file = std::env::temp_dir().join(format!(
-            "herdr bridge descendant {}.pid",
-            std::process::id()
+            "herdr bridge descendant {}-{}.pid",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("current time")
+                .as_nanos()
         ));
         let script = format!(
             "$child = Start-Process powershell.exe -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30' -NoNewWindow -PassThru; Set-Content -LiteralPath {} -Value $child.Id; exit 23",
