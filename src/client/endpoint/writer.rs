@@ -13,8 +13,6 @@ const MAX_QUEUED_MESSAGES: usize = 256;
 const MAX_QUEUED_BYTES: usize = 2 * crate::protocol::MAX_GRAPHICS_FRAME_SIZE;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const IO_POLL_INTERVAL: Duration = Duration::from_millis(2);
-// Match interprocess's Windows pipe buffer hint; other transports keep full writes.
-const WRITE_CHUNK_SIZE: usize = if cfg!(windows) { 512 } else { usize::MAX };
 
 enum WriterCommand {
     Frame(Vec<u8>),
@@ -168,7 +166,10 @@ fn write_frame(
     while !frame.is_empty() && !stopped.load(Ordering::Acquire) {
         // Match interprocess's 512-byte pipe buffer hint: larger nonblocking Windows
         // writes can make no progress when the peer polls instead of blocking on read.
-        let chunk = &frame[..frame.len().min(WRITE_CHUNK_SIZE)];
+        #[cfg(windows)]
+        let chunk = &frame[..frame.len().min(512)];
+        #[cfg(not(windows))]
+        let chunk = frame;
         match writer.write(chunk) {
             Ok(0) => {}
             Ok(written) => {
