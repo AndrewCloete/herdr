@@ -3847,8 +3847,18 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(20));
         };
-        // End only the test descendant, including when the old tree-wide wait hangs.
-        let descendant = fs::read_to_string(&pid_file).expect("descendant PID");
+        if status.is_none() {
+            let mut cleanup = Command::new("taskkill.exe");
+            cleanup.args(["/PID", &launcher.id().to_string(), "/T", "/F"]);
+            crate::platform::configure_background_command(&mut cleanup);
+            let _ = cleanup.output();
+            let _ = launcher.kill();
+        }
+        let _ = launcher.wait();
+        // Clean up the launcher before a missing PID can fail the test.
+        let descendant = fs::read_to_string(&pid_file);
+        let _ = fs::remove_file(pid_file);
+        let descendant = descendant.expect("descendant PID");
         let descendant = descendant.trim().parse::<u32>().expect("numeric PID");
         let mut cleanup = Command::new("powershell.exe");
         cleanup
@@ -3856,11 +3866,6 @@ mod tests {
             .arg(format!("Stop-Process -Id {descendant} -ErrorAction Stop"));
         crate::platform::configure_background_command(&mut cleanup);
         let descendant_was_running = cleanup.status().expect("stop test descendant").success();
-        if status.is_none() {
-            let _ = launcher.kill();
-        }
-        let _ = launcher.wait();
-        let _ = fs::remove_file(pid_file);
         assert!(
             descendant_was_running,
             "descendant must outlive the application"
