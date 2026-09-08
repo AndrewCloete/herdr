@@ -429,6 +429,166 @@ fn pane_cycle_last_and_agent_actions_resolve_to_stable_pane_ids() {
     ));
 }
 
+/// Resolve a keybinding to the endpoint `Method` it emits, if any. Returns
+/// `None` when the action produced no endpoint request (i.e. it was a no-op).
+fn last_toggle_method(
+    state: &mut ClientShellState,
+    action: crate::input::KeybindAction,
+) -> Option<crate::api::schema::Method> {
+    let mut input = ClientShellInput::default();
+    state.record_binding(crate::input::KeybindMatch::Action(action), &mut input);
+    input.actions.iter().find_map(|action| match action {
+        ClientShellAction::Endpoint { request, .. } => Some(request.method.clone()),
+        _ => None,
+    })
+}
+
+/// Build a snapshot with two workspaces, each owning two tabs and one pane per
+/// tab: ws_1 has tab_1/pane_1 and tab_2/pane_2; ws_2 has tab_3/pane_3 and
+/// tab_4/pane_4. Focus starts on ws_1 / tab_1 / pane_1.
+fn multi_workspace_snapshot() -> ClientShellSnapshot {
+    let mut base = snapshot();
+
+    let make_tab = |base: &ClientShellSnapshot, tab_id: &str, workspace_id: &str| {
+        let mut tab = base.tabs[0].clone();
+        tab.tab_id = tab_id.into();
+        tab.workspace_id = workspace_id.into();
+        tab.focused = false;
+        tab
+    };
+    let make_pane =
+        |base: &ClientShellSnapshot, pane_id: &str, workspace_id: &str, tab_id: &str| {
+            let mut pane = base.panes[0].clone();
+            pane.pane_id = pane_id.into();
+            pane.workspace_id = workspace_id.into();
+            pane.tab_id = tab_id.into();
+            pane.focused = false;
+            pane
+        };
+
+    let mut ws_2 = base.workspaces[0].clone();
+    ws_2.workspace_id = "ws_2".into();
+    ws_2.active_tab_id = "tab_3".into();
+    ws_2.focused = false;
+
+    base.tabs.push(make_tab(&base, "tab_2", "ws_1"));
+    base.tabs.push(make_tab(&base, "tab_3", "ws_2"));
+    base.tabs.push(make_tab(&base, "tab_4", "ws_2"));
+    base.panes.push(make_pane(&base, "pane_2", "ws_1", "tab_2"));
+    base.panes.push(make_pane(&base, "pane_3", "ws_2", "tab_3"));
+    base.panes.push(make_pane(&base, "pane_4", "ws_2", "tab_4"));
+    base.workspaces.push(ws_2);
+    base
+}
+
+/// Apply a new focus target as a fresh snapshot so the client records the
+/// previous focus, mirroring how the server pushes projection updates.
+fn focus_snapshot(
+    state: &mut ClientShellState,
+    revision: u64,
+    workspace_id: &str,
+    tab_id: &str,
+    pane_id: &str,
+) {
+    let mut next = multi_workspace_snapshot();
+    next.revision = revision;
+    next.focused_workspace_id = Some(workspace_id.into());
+    next.focused_tab_id = Some(tab_id.into());
+    next.focused_pane_id = Some(pane_id.into());
+    state.set_snapshot(Box::new(next));
+}
+
+#[test]
+fn last_pane_local_toggles_within_current_workspace() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(multi_workspace_snapshot()));
+
+    // pane_1 -> pane_2 within ws_1 records pane_1 as the workspace-local last pane.
+    focus_snapshot(&mut state, 2, "ws_1", "tab_2", "pane_2");
+    assert!(matches!(
+        last_toggle_method(&mut state, crate::input::KeybindAction::LastPaneLocal),
+        Some(crate::api::schema::Method::PaneFocus(target)) if target.pane_id == "pane_1"
+    ));
+
+    // Repeated presses alternate: after focusing pane_1 again, the local toggle
+    // returns to pane_2.
+    focus_snapshot(&mut state, 3, "ws_1", "tab_1", "pane_1");
+    assert!(matches!(
+        last_toggle_method(&mut state, crate::input::KeybindAction::LastPaneLocal),
+        Some(crate::api::schema::Method::PaneFocus(target)) if target.pane_id == "pane_2"
+    ));
+}
+
+#[test]
+fn last_pane_local_never_crosses_workspaces() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(multi_workspace_snapshot()));
+
+    // Jump ws_1/pane_1 -> ws_2/pane_3. This crosses workspaces, so no ws_2-local
+    // last pane is recorded, but the global last pane still points into ws_1.
+    focus_snapshot(&mut state, 2, "ws_2", "tab_3", "pane_3");
+
+    // Global last_pane crosses back to pane_1 in ws_1.
+    assert!(matches!(
+        last_toggle_method(&mut state, crate::input::KeybindAction::LastPane),
+        Some(crate::api::schema::Method::PaneFocus(target)) if target.pane_id == "pane_1"
+    ));
+
+    // The workspace-local toggle must not jump to another workspace: ws_2 has no
+    // local history yet, so it is a no-op.
+    assert!(last_toggle_method(&mut state, crate::input::KeybindAction::LastPaneLocal).is_none());
+}
+
+#[test]
+fn last_tab_toggles_per_workspace_independently() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(multi_workspace_snapshot()));
+
+    // ws_1: tab_1 -> tab_2 records tab_1 as ws_1's previous tab.
+    focus_snapshot(&mut state, 2, "ws_1", "tab_2", "pane_2");
+    assert!(matches!(
+        last_toggle_method(&mut state, crate::input::KeybindAction::LastTab),
+        Some(crate::api::schema::Method::TabFocus(target)) if target.tab_id == "tab_1"
+    ));
+
+    // Cross to ws_2 and switch tabs there. ws_2 tracks its own previous tab
+    // without disturbing ws_1's.
+    focus_snapshot(&mut state, 3, "ws_2", "tab_3", "pane_3");
+    focus_snapshot(&mut state, 4, "ws_2", "tab_4", "pane_4");
+    assert!(matches!(
+        last_toggle_method(&mut state, crate::input::KeybindAction::LastTab),
+        Some(crate::api::schema::Method::TabFocus(target)) if target.tab_id == "tab_3"
+    ));
+
+    // Returning to ws_1 (on a different tab than its remembered pair) still
+    // toggles back to tab_1: the detour through ws_2 left ws_1's state intact.
+    focus_snapshot(&mut state, 5, "ws_1", "tab_2", "pane_2");
+    assert!(matches!(
+        last_toggle_method(&mut state, crate::input::KeybindAction::LastTab),
+        Some(crate::api::schema::Method::TabFocus(target)) if target.tab_id == "tab_1"
+    ));
+}
+
+#[test]
+fn last_workspace_toggles_between_workspaces() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(multi_workspace_snapshot()));
+
+    // ws_1 -> ws_2 records ws_1 as the previous workspace.
+    focus_snapshot(&mut state, 2, "ws_2", "tab_3", "pane_3");
+    assert!(matches!(
+        last_toggle_method(&mut state, crate::input::KeybindAction::LastWorkspace),
+        Some(crate::api::schema::Method::WorkspaceFocus(target)) if target.workspace_id == "ws_1"
+    ));
+
+    // Repeated presses alternate back to ws_2.
+    focus_snapshot(&mut state, 3, "ws_1", "tab_1", "pane_1");
+    assert!(matches!(
+        last_toggle_method(&mut state, crate::input::KeybindAction::LastWorkspace),
+        Some(crate::api::schema::Method::WorkspaceFocus(target)) if target.workspace_id == "ws_2"
+    ));
+}
+
 #[test]
 fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
     let mut projected = snapshot();

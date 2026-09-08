@@ -429,6 +429,12 @@ pub struct KeysConfig {
     pub cycle_pane_previous: BindingConfig,
     /// Focus the last focused pane across workspaces and tabs. Unset by default.
     pub last_pane: BindingConfig,
+    /// Focus the last focused pane within the current workspace only. Unset by default.
+    pub last_pane_local: BindingConfig,
+    /// Focus the previously active tab within the current workspace. Unset by default.
+    pub last_tab: BindingConfig,
+    /// Focus the previously active workspace. Unset by default.
+    pub last_workspace: BindingConfig,
     /// Split pane vertically (side by side). Default: "prefix+v"
     pub split_vertical: BindingConfig,
     /// Split pane horizontally (stacked). Default: "prefix+minus"
@@ -561,6 +567,12 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     last_pane: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    last_pane_local: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_tab: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_workspace: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     split_vertical: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     split_horizontal: Option<BindingConfig>,
@@ -658,6 +670,9 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(cycle_pane_next);
         apply_field!(cycle_pane_previous);
         apply_field!(last_pane);
+        apply_field!(last_pane_local);
+        apply_field!(last_tab);
+        apply_field!(last_workspace);
         apply_field!(split_vertical);
         apply_field!(split_horizontal);
         apply_field!(close_pane);
@@ -1130,6 +1145,9 @@ impl Default for KeysConfig {
             cycle_pane_next: BindingConfig::one("prefix+tab"),
             cycle_pane_previous: BindingConfig::one("prefix+shift+tab"),
             last_pane: BindingConfig::empty(),
+            last_pane_local: BindingConfig::empty(),
+            last_tab: BindingConfig::empty(),
+            last_workspace: BindingConfig::empty(),
             split_vertical: BindingConfig::one("prefix+v"),
             split_horizontal: BindingConfig::one("prefix+minus"),
             close_pane: BindingConfig::one("prefix+x"),

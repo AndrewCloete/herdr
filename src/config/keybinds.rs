@@ -359,6 +359,9 @@ pub struct Keybinds {
     pub cycle_pane_next: ActionKeybinds,
     pub cycle_pane_previous: ActionKeybinds,
     pub last_pane: ActionKeybinds,
+    pub last_pane_local: ActionKeybinds,
+    pub last_tab: ActionKeybinds,
+    pub last_workspace: ActionKeybinds,
     pub split_vertical: ActionKeybinds,
     pub split_horizontal: ActionKeybinds,
     pub close_pane: ActionKeybinds,
@@ -527,6 +530,9 @@ impl Config {
             cycle_pane_next: empty_action!(),
             cycle_pane_previous: empty_action!(),
             last_pane: empty_action!(),
+            last_pane_local: empty_action!(),
+            last_tab: empty_action!(),
+            last_workspace: empty_action!(),
             split_vertical: empty_action!(),
             split_horizontal: empty_action!(),
             close_pane: empty_action!(),
@@ -672,6 +678,9 @@ impl Config {
             apply_action!(keybinds.swap_pane_up, swap_pane_up, source);
             apply_action!(keybinds.swap_pane_right, swap_pane_right, source);
             apply_action!(keybinds.last_pane, last_pane, source);
+            apply_action!(keybinds.last_pane_local, last_pane_local, source);
+            apply_action!(keybinds.last_tab, last_tab, source);
+            apply_action!(keybinds.last_workspace, last_workspace, source);
             apply_action!(keybinds.cycle_pane_next, cycle_pane_next, source);
             apply_action!(keybinds.cycle_pane_previous, cycle_pane_previous, source);
             apply_action!(keybinds.split_vertical, split_vertical, source);
@@ -1624,6 +1633,46 @@ next_tab = "prefix+n"
     #[test]
     fn back_and_forth_keybinds_are_unset_by_default() {
         let kb = Config::default().keybinds();
+        assert!(kb.last_pane.bindings.is_empty());
+        assert!(kb.last_pane_local.bindings.is_empty());
+        assert!(kb.last_tab.bindings.is_empty());
+        assert!(kb.last_workspace.bindings.is_empty());
+    }
+
+    #[test]
+    fn session_scoped_last_toggles_parse_from_config() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+last_pane_local = "prefix+o"
+last_tab = "prefix+i"
+last_workspace = "prefix+u"
+"#,
+        )
+        .unwrap();
+        let kb = config.keybinds();
+        assert_eq!(
+            binding_triggers(&kb.last_pane_local),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('o'),
+                KeyModifiers::empty()
+            ))]
+        );
+        assert_eq!(
+            binding_triggers(&kb.last_tab),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('i'),
+                KeyModifiers::empty()
+            ))]
+        );
+        assert_eq!(
+            binding_triggers(&kb.last_workspace),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('u'),
+                KeyModifiers::empty()
+            ))]
+        );
+        // The existing global last_pane is untouched by the new bindings.
         assert!(kb.last_pane.bindings.is_empty());
     }
 

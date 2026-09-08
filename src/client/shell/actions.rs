@@ -1141,6 +1141,42 @@ impl ClientShellState {
                     pane_id: pane_id.clone(),
                 }))
             }
+            KeybindAction::LastPaneLocal => {
+                let pane_id = self.previous_local_pane_id.get(&focused_workspace)?.clone();
+                if Some(pane_id.as_str()) == focused_pane.as_deref()
+                    || !snapshot.panes.iter().any(|pane| {
+                        pane.pane_id == pane_id && pane.workspace_id == focused_workspace
+                    })
+                {
+                    return None;
+                }
+                Some(Method::PaneFocus(PaneTarget { pane_id }))
+            }
+            KeybindAction::LastTab => {
+                let tab_id = self.previous_tab_id.get(&focused_workspace)?.clone();
+                if Some(tab_id.as_str()) == focused_tab.as_deref()
+                    || !snapshot
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.tab_id == tab_id && tab.workspace_id == focused_workspace)
+                {
+                    return None;
+                }
+                Some(Method::TabFocus(TabTarget { tab_id }))
+            }
+            KeybindAction::LastWorkspace => {
+                let workspace_id = self.previous_workspace_id.clone()?;
+                if workspace_id == focused_workspace
+                    || !snapshot
+                        .workspaces
+                        .iter()
+                        .any(|workspace| workspace.workspace_id == workspace_id)
+                {
+                    return None;
+                }
+                self.reveal_workspace(&workspace_id);
+                Some(Method::WorkspaceFocus(WorkspaceTarget { workspace_id }))
+            }
             KeybindAction::Zoom => Some(Method::PaneZoom(PaneZoomParams {
                 pane_id: focused_pane,
                 mode: PaneZoomMode::Toggle,

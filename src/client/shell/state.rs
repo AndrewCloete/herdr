@@ -929,6 +929,9 @@ pub(crate) struct ClientShellState {
     pub(super) navigate_workspace_id: Option<String>,
     pub(super) overlay: Option<ClientShellOverlay>,
     pub(super) previous_pane_id: Option<String>,
+    pub(super) previous_workspace_id: Option<String>,
+    pub(super) previous_local_pane_id: HashMap<String, String>,
+    pub(super) previous_tab_id: HashMap<String, String>,
     pub(super) pane_mouse_gesture: Option<ClientPaneMouseGesture>,
     pub(super) url_click_consumes_until_up: bool,
     pub(super) replaying_url_click: bool,
@@ -1072,6 +1075,9 @@ impl ClientShellState {
             navigate_workspace_id: None,
             overlay,
             previous_pane_id: None,
+            previous_workspace_id: None,
+            previous_local_pane_id: HashMap::new(),
+            previous_tab_id: HashMap::new(),
             pane_mouse_gesture: None,
             url_click_consumes_until_up: false,
             replaying_url_click: false,
@@ -1224,6 +1230,9 @@ impl ClientShellState {
             .startup_onboarding
             .then_some(ClientShellOverlay::Onboarding);
         self.previous_pane_id = None;
+        self.previous_workspace_id = None;
+        self.previous_local_pane_id.clear();
+        self.previous_tab_id.clear();
         self.pane_mouse_gesture = None;
         self.url_click_consumes_until_up = false;
         self.replaying_url_click = false;
@@ -1316,13 +1325,61 @@ impl ClientShellState {
         }
         if boot_changed {
             self.reset_endpoint_projection();
-        } else if let Some(previous) = self
-            .snapshot
-            .as_deref()
-            .and_then(|current| current.focused_pane_id.as_ref())
-            .filter(|previous| Some(previous.as_str()) != snapshot.focused_pane_id.as_deref())
-        {
-            self.previous_pane_id = Some(previous.clone());
+        } else {
+            // Snapshot the previous focus before it is replaced so the various
+            // "last / toggle" bindings can jump back to it. The immutable borrow
+            // is released before the fields below are mutated.
+            let previous_focus = self.snapshot.as_deref().map(|current| {
+                (
+                    current.focused_workspace_id.clone(),
+                    current.focused_tab_id.clone(),
+                    current.focused_pane_id.clone(),
+                )
+            });
+            if let Some((old_workspace, old_tab, old_pane)) = previous_focus {
+                let new_workspace = snapshot.focused_workspace_id.as_deref();
+                let new_tab = snapshot.focused_tab_id.as_deref();
+                let new_pane = snapshot.focused_pane_id.as_deref();
+
+                // last_pane: most recent pane across all workspaces and tabs.
+                if let Some(previous) = old_pane
+                    .as_deref()
+                    .filter(|previous| Some(*previous) != new_pane)
+                {
+                    self.previous_pane_id = Some(previous.to_string());
+                }
+
+                // last_workspace: most recently active workspace.
+                if let Some(previous) = old_workspace
+                    .as_deref()
+                    .filter(|previous| Some(*previous) != new_workspace)
+                {
+                    self.previous_workspace_id = Some(previous.to_string());
+                }
+
+                // The session-scoped local toggles only record transitions that
+                // stay within one workspace, so switching workspaces never
+                // pollutes a workspace's own last-pane / last-tab pair.
+                if let Some(workspace) = old_workspace
+                    .as_deref()
+                    .filter(|workspace| Some(*workspace) == new_workspace)
+                {
+                    if let Some(previous) = old_pane
+                        .as_deref()
+                        .filter(|previous| Some(*previous) != new_pane)
+                    {
+                        self.previous_local_pane_id
+                            .insert(workspace.to_string(), previous.to_string());
+                    }
+                    if let Some(previous) = old_tab
+                        .as_deref()
+                        .filter(|previous| Some(*previous) != new_tab)
+                    {
+                        self.previous_tab_id
+                            .insert(workspace.to_string(), previous.to_string());
+                    }
+                }
+            }
         }
         if snapshot_keybindings_changed {
             if let Err(err) = self.config.apply_snapshot_keybindings(

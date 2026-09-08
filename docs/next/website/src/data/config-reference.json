@@ -770,6 +770,24 @@
           "description": "Focus the last focused pane across workspaces and tabs. Unset by default."
         },
         {
+          "key": "keys.last_pane_local",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Focus the last focused pane within the current workspace only. Unset by default."
+        },
+        {
+          "key": "keys.last_tab",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Focus the previously active tab within the current workspace. Unset by default."
+        },
+        {
+          "key": "keys.last_workspace",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Focus the previously active workspace. Unset by default."
+        },
+        {
           "key": "keys.split_vertical",
           "type": "keybinding",
           "default": "\"prefix+v\"",

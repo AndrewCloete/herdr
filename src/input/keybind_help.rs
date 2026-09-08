@@ -189,7 +189,18 @@ pub(crate) fn keybind_help_groups(
                     binding_label(&keybinds.cycle_pane_previous),
                     "cycle pane previous",
                 ),
+            ],
+        ),
+        (
+            "last / toggle",
+            vec![
                 entry(binding_label(&keybinds.last_pane), "last pane"),
+                entry(
+                    binding_label(&keybinds.last_pane_local),
+                    "last pane (local)",
+                ),
+                entry(binding_label(&keybinds.last_tab), "last tab"),
+                entry(binding_label(&keybinds.last_workspace), "last workspace"),
             ],
         ),
     ];
