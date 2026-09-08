@@ -272,6 +272,7 @@ pub(super) enum ClientShellMode {
     Terminal,
     Prefix,
     Navigate,
+    AgentPicker,
     Resize,
     Copy,
 }
@@ -904,6 +905,7 @@ pub(crate) struct ClientShellState {
     pub(super) navigate_workspace_id: Option<WorkspaceNavigationTarget>,
     pub(super) pending_workspace_highlight: Option<PendingWorkspaceHighlight>,
     pub(super) reveal_navigation_workspace: bool,
+    pub(super) navigate_agent_pane_id: Option<String>,
     pub(super) overlay: Option<ClientShellOverlay>,
     pub(super) previous_pane_id: Option<String>,
     pub(super) previous_workspace_id: Option<String>,
@@ -1081,6 +1083,7 @@ impl ClientShellState {
             navigate_workspace_id: None,
             pending_workspace_highlight: None,
             reveal_navigation_workspace: false,
+            navigate_agent_pane_id: None,
             overlay,
             previous_pane_id: None,
             previous_workspace_id: None,
@@ -1460,7 +1463,10 @@ impl ClientShellState {
             } else if active_keymap_changed
                 && matches!(
                     self.mode,
-                    ClientShellMode::Prefix | ClientShellMode::Navigate | ClientShellMode::Resize
+                    ClientShellMode::Prefix
+                        | ClientShellMode::Navigate
+                        | ClientShellMode::AgentPicker
+                        | ClientShellMode::Resize
                 )
             {
                 self.mode = ClientShellMode::Terminal;
@@ -1578,6 +1584,16 @@ impl ClientShellState {
                 .as_deref()
                 .and_then(|id| self.navigation_target(&self.active_endpoint_id, id));
             self.reveal_mobile_workspace = self.mobile_layout_active();
+        }
+        if self.mode == ClientShellMode::AgentPicker
+            && self.navigate_agent_pane_id.as_ref().is_none_or(|selected| {
+                !snapshot
+                    .agents
+                    .iter()
+                    .any(|agent| &agent.pane_id == selected)
+            })
+        {
+            self.navigate_agent_pane_id = snapshot.agents.first().map(|a| a.pane_id.clone());
         }
         let pane_exists =
             |pane_id: &String| snapshot.panes.iter().any(|pane| &pane.pane_id == pane_id);
@@ -1736,6 +1752,7 @@ impl ClientShellState {
             }
             self.mode = ClientShellMode::Terminal;
             self.navigate_workspace_id = None;
+            self.navigate_agent_pane_id = None;
             if !matches!(
                 self.overlay.as_ref(),
                 Some(ClientShellOverlay::Onboarding | ClientShellOverlay::ProductAnnouncement(_))

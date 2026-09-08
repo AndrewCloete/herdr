@@ -436,6 +436,7 @@ pub(crate) fn render_sidebar(
         snapshot,
         config,
         state.agent_scroll,
+        state.selected_agent_pane_id,
         hits,
     );
 

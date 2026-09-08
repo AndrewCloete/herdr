@@ -75,6 +75,7 @@ impl ClientShellState {
                 .filter(|_| valid_navigation_target)
                 .or_else(|| pending_workspace_highlight.map(|pending| &pending.target)),
             reveal_navigation_workspace: &mut self.reveal_navigation_workspace,
+            selected_agent_pane_id: self.navigate_agent_pane_id.as_deref(),
             dragged_workspace_id: None,
             workspace_drop_indicator_row: None,
         };
@@ -231,6 +232,9 @@ impl ClientShellState {
                     .filter(|_| valid_navigation_target)
                     .or_else(|| pending_workspace_highlight.map(|pending| &pending.target)),
                 reveal_navigation_workspace: &mut self.reveal_navigation_workspace,
+                selected_agent_pane_id: (self.mode == ClientShellMode::AgentPicker)
+                    .then_some(self.navigate_agent_pane_id.as_deref())
+                    .flatten(),
                 dragged_workspace_id,
                 workspace_drop_indicator_row,
             },
