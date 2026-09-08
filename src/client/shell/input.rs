@@ -588,6 +588,10 @@ impl ClientShellState {
                 self.route_navigate_key(key, outcome);
                 None
             }
+            ClientShellMode::AgentPicker => {
+                self.route_agent_picker_key(key, outcome);
+                None
+            }
             ClientShellMode::Resize => {
                 self.route_resize_key(key, outcome);
                 None
@@ -893,6 +897,68 @@ impl ClientShellState {
         if !mobile {
             self.reveal_workspace(&workspace_id);
         }
+    }
+
+    fn route_agent_picker_key(
+        &mut self,
+        key: &crate::input::TerminalKey,
+        outcome: &mut ClientShellInput,
+    ) {
+        if key.code == KeyCode::Esc
+            || crate::config::terminal_key_matches_combo(key, self.config.keybinds.prefix)
+        {
+            self.mode = self.copy_or_terminal_mode();
+            self.navigate_agent_pane_id = None;
+            outcome.repaint = true;
+            return;
+        }
+
+        let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
+        if modifiers.is_empty() {
+            match code {
+                KeyCode::Up => {
+                    self.move_navigate_agent(-1);
+                    outcome.repaint = true;
+                }
+                KeyCode::Down => {
+                    self.move_navigate_agent(1);
+                    outcome.repaint = true;
+                }
+                KeyCode::Enter => {
+                    let selected = self.navigate_agent_pane_id.clone();
+                    self.mode = ClientShellMode::Terminal;
+                    self.navigate_agent_pane_id = None;
+                    if let Some(pane_id) = selected {
+                        self.push_endpoint_method(
+                            crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
+                                pane_id,
+                            }),
+                            outcome,
+                        );
+                    }
+                    outcome.repaint = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn move_navigate_agent(&mut self, delta: isize) {
+        let Some(snapshot) = self.snapshot.as_deref() else {
+            return;
+        };
+        let pane_ids =
+            super::agent_sidebar::ordered_agent_pane_ids(snapshot, self.config.agent_panel_sort);
+        if pane_ids.is_empty() {
+            return;
+        }
+        let current = self
+            .navigate_agent_pane_id
+            .as_deref()
+            .and_then(|selected| pane_ids.iter().position(|id| id == selected))
+            .unwrap_or(0);
+        let next = (current as isize + delta).rem_euclid(pane_ids.len() as isize) as usize;
+        self.navigate_agent_pane_id = Some(pane_ids[next].clone());
     }
 
     fn cycle_pane(&mut self, reverse: bool, outcome: &mut ClientShellInput) {

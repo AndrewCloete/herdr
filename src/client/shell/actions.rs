@@ -136,6 +136,26 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                if action == crate::input::KeybindAction::OpenAgentPicker {
+                    self.mode = ClientShellMode::AgentPicker;
+                    self.navigate_agent_pane_id = self.snapshot.as_deref().and_then(|snapshot| {
+                        snapshot
+                            .agents
+                            .iter()
+                            .find(|a| a.focused)
+                            .map(|a| a.pane_id.clone())
+                            .or_else(|| {
+                                super::agent_sidebar::ordered_agent_pane_ids(
+                                    snapshot,
+                                    self.config.agent_panel_sort,
+                                )
+                                .into_iter()
+                                .next()
+                            })
+                    });
+                    outcome.repaint = true;
+                    return;
+                }
                 if action == crate::input::KeybindAction::EnterResizeMode {
                     self.mode = ClientShellMode::Resize;
                     outcome.repaint = true;

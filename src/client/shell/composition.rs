@@ -54,6 +54,7 @@ impl ClientShellState {
                 sidebar_section_split: self.sidebar_section_split,
                 tab_drag_insert_index: None,
                 selected_workspace_id: self.navigate_workspace_id.as_deref(),
+                selected_agent_pane_id: self.navigate_agent_pane_id.as_deref(),
                 dragged_workspace_id: None,
                 workspace_drop_indicator_row: None,
             },
@@ -153,6 +154,9 @@ impl ClientShellState {
                 tab_drag_insert_index,
                 selected_workspace_id: (self.mode == ClientShellMode::Navigate)
                     .then_some(self.navigate_workspace_id.as_deref())
+                    .flatten(),
+                selected_agent_pane_id: (self.mode == ClientShellMode::AgentPicker)
+                    .then_some(self.navigate_agent_pane_id.as_deref())
                     .flatten(),
                 dragged_workspace_id,
                 workspace_drop_indicator_row,

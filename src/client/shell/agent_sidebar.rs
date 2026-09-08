@@ -55,6 +55,7 @@ pub(super) fn render_agent_panel(
     snapshot: &ClientShellSnapshot,
     config: &ClientShellConfig,
     agent_scroll: &mut usize,
+    selected_pane_id: Option<&str>,
     hits: &mut ShellHitMap,
 ) {
     if !render_agent_panel_header(
@@ -82,7 +83,7 @@ pub(super) fn render_agent_panel(
         |row| row.rows.len(),
         |buffer, rect, row, hits| {
             hits.agents.push((rect, row.pane_id.clone()));
-            render_agent_row(buffer, rect, row, config);
+            render_agent_row(buffer, rect, row, selected_pane_id, config);
         },
     );
 }
@@ -315,10 +316,14 @@ pub(super) fn render_agent_row(
     buffer: &mut Buffer,
     rect: Rect,
     row: &AgentRow,
+    selected_pane_id: Option<&str>,
     config: &ClientShellConfig,
 ) {
     let palette = &config.palette;
-    let row_style = if row.focused {
+    let selected = selected_pane_id == Some(row.pane_id.as_str());
+    let row_style = if selected {
+        Style::default().bg(palette.selection_bg)
+    } else if row.focused {
         Style::default().bg(palette.active_row_bg)
     } else {
         Style::default()

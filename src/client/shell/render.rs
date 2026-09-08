@@ -109,6 +109,16 @@ pub(super) fn render_mode_bar(
                     (" keybinds".to_owned(), base),
                 ]);
             }
+            ClientShellMode::AgentPicker => {
+                segments.extend([
+                    (" AGENTS ".to_owned(), mode_style),
+                    (" esc back  ".to_owned(), base),
+                    ("↑/↓".to_owned(), key),
+                    (" select  ".to_owned(), base),
+                    ("enter".to_owned(), key),
+                    (" focus".to_owned(), base),
+                ]);
+            }
             ClientShellMode::Resize => {
                 segments.extend([
                     (" RESIZE ".to_owned(), mode_style),
@@ -224,6 +234,7 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) sidebar_section_split: f32,
     pub(super) tab_drag_insert_index: Option<usize>,
     pub(super) selected_workspace_id: Option<&'a str>,
+    pub(super) selected_agent_pane_id: Option<&'a str>,
     pub(super) dragged_workspace_id: Option<&'a str>,
     pub(super) workspace_drop_indicator_row: Option<u16>,
 }

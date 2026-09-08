@@ -536,6 +536,12 @@
           "description": "Open the workspace navigation surface."
         },
         {
+          "key": "keys.agent_picker",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Open the agent navigation panel."
+        },
+        {
           "key": "keys.goto",
           "type": "keybinding",
           "default": "\"prefix+g\"",
